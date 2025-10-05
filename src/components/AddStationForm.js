@@ -58,8 +58,8 @@ const AddStationForm = ({ stationToEdit, onSuccess, onClose }) => {
     e.preventDefault();
     setLoading(true);
 
-    if (parseInt(formData.availableSlots) > parseInt(formData.totalSlots)) {
-        toast.error('Available slots cannot be greater than total slots.');
+  if (parseInt(formData.availableSlots) > parseInt(formData.totalSlots)) {
+    toast.error('Available ports cannot be greater than total ports.');
         setLoading(false);
         return;
     }
@@ -115,18 +115,18 @@ const AddStationForm = ({ stationToEdit, onSuccess, onClose }) => {
                 <input type="text" name="address" id="address" value={formData.location.address} onChange={handleChange} required className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-white placeholder-slate-400" />
             </div>
 
-            <div>
-                <label htmlFor="totalSlots" className="block text-sm font-medium text-slate-300">Total Slots</label>
+      <div>
+        <label htmlFor="totalSlots" className="block text-sm font-medium text-slate-300">Total Ports</label>
                 <input type="number" name="totalSlots" id="totalSlots" value={formData.totalSlots} onChange={handleChange} required min="0" className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-white placeholder-slate-400" />
             </div>
             
-            <div>
-                <label htmlFor="availableSlots" className="block text-sm font-medium text-slate-300">Available Slots</label>
+      <div>
+        <label htmlFor="availableSlots" className="block text-sm font-medium text-slate-300">Available Ports</label>
                 <input type="number" name="availableSlots" id="availableSlots" value={formData.availableSlots} onChange={handleChange} required min="0" className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-white placeholder-slate-400" />
             </div>
             
             <div>
-                <label htmlFor="pricePerHour" className="block text-sm font-medium text-slate-300">Price per Hour ($)</label>
+                <label htmlFor="pricePerHour" className="block text-sm font-medium text-slate-300">Price per Hour (₹)</label>
                 <input type="number" name="pricePerHour" id="pricePerHour" value={formData.pricePerHour} onChange={handleChange} required min="0" step="0.01" className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-white placeholder-slate-400" />
             </div>
             

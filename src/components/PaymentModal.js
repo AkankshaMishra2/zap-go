@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
-import { FiCreditCard, FiSmartphone, FiClock, FiAlertTriangle, FiCheck, FiX, FiZap, FiDollarSign, FiPercent } from 'react-icons/fi';
+import { FiCreditCard, FiSmartphone, FiAlertTriangle, FiCheck, FiX, FiZap, FiDollarSign, FiPercent } from 'react-icons/fi';
+import PropTypes from 'prop-types';
 
 const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDetails }) => {
   const [mounted, setMounted] = useState(false);
@@ -16,7 +17,7 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
   });
   const [timeRemaining, setTimeRemaining] = useState(300); // 5 minutes in seconds
   const [dynamicPricing, setDynamicPricing] = useState(0);
-  const [penalty, setPenalty] = useState(0);
+  // penalty is computed externally if needed
   const [isPaymentExpired, setIsPaymentExpired] = useState(false);
 
   // Check if this is a bid payment
@@ -71,14 +72,10 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
     }
   }, [isOpen]);
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  // Timer formatting not displayed in UI currently
 
   const calculateTotalAmount = () => {
-    const baseAmount = paymentType === 'booking' ? amount * 0.2 : amount;
+    const baseAmount = paymentType === 'booking' ? amount * 0.1 : amount;
     return baseAmount + dynamicPricing;
   };
 
@@ -111,6 +108,12 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
 
   if (!isOpen) return null;
 
+  const baseAmountDisplay = isBidPayment
+    ? amount
+    : paymentType === 'booking'
+    ? amount * 0.1
+    : amount;
+
   const modalContent = (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-xl max-w-2xl w-full mx-auto max-h-[90vh] overflow-y-auto">
@@ -121,7 +124,7 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
             </h2>
             <p className="text-slate-400 mt-1">
               {isBidPayment 
-                ? `Complete payment for your winning bid of $${amount.toFixed(2)}`
+                ? `Complete payment for your winning bid of ₹${amount.toFixed(2)}`
                 : 'Complete your booking payment'
               }
             </p>
@@ -151,9 +154,9 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
                   <div className="flex items-center space-x-3">
                     <FiPercent className="h-6 w-6" />
                     <div className="text-left">
-                      <div className="font-semibold">Booking Payment (20%)</div>
+                      <div className="font-semibold">Booking Payment (10%)</div>
                       <div className="text-sm opacity-75">Initial partial payment</div>
-                      <div className="text-lg font-bold">${(amount * 0.2).toFixed(2)}</div>
+                      <div className="text-lg font-bold">₹{(amount * 0.1).toFixed(2)}</div>
                     </div>
                   </div>
                 </button>
@@ -169,9 +172,9 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
                   <div className="flex items-center space-x-3">
                     <FiDollarSign className="h-6 w-6" />
                     <div className="text-left">
-                      <div className="font-semibold">Full Slot Payment</div>
+                      <div className="font-semibold">Full Port Payment</div>
                       <div className="text-sm opacity-75">Pay complete amount</div>
-                      <div className="text-lg font-bold">${amount.toFixed(2)}</div>
+                      <div className="text-lg font-bold">₹{amount.toFixed(2)}</div>
                     </div>
                   </div>
                 </button>
@@ -187,7 +190,7 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
                 <span className="font-semibold">Winning Bid Payment</span>
               </div>
               <p className="text-yellow-300 text-sm">
-                You won the auction! Please complete payment to secure your slot.
+                You won the auction! Please complete payment to secure your port.
               </p>
             </div>
           )}
@@ -200,7 +203,7 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
                 <span className="font-semibold">Dynamic Pricing Applied</span>
               </div>
               <p className="text-yellow-300 text-sm">
-                Peak hour pricing: +${dynamicPricing.toFixed(2)} (demand-based adjustment)
+                Peak hour pricing: +₹{dynamicPricing.toFixed(2)} (demand-based adjustment)
               </p>
             </div>
           )}
@@ -223,8 +226,8 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
               ) : (
                 <>
                   <p>• Booking payment is <strong>non-refundable</strong></p>
-                  <p>• No-show penalty: Additional ${(amount * 0.15).toFixed(2)} if you don't arrive within 15 minutes of booking time</p>
-                  <p>• Late arrival: ${(amount * 0.10).toFixed(2)} penalty if more than 10 minutes late</p>
+                  <p>• No-show penalty: Additional ₹{(amount * 0.15).toFixed(2)} if you don't arrive within 15 minutes of booking time</p>
+                  <p>• Late arrival: ₹{(amount * 0.10).toFixed(2)} penalty if more than 10 minutes late</p>
                 </>
               )}
             </div>
@@ -279,10 +282,11 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
             {paymentMethod === 'card' && (
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">
+                  <label htmlFor="cardholder-name" className="block text-sm font-medium text-white mb-1">
                     Cardholder Name
                   </label>
                   <input
+                    id="cardholder-name"
                     type="text"
                     value={cardDetails.name}
                     onChange={(e) => setCardDetails(prev => ({ ...prev, name: e.target.value }))}
@@ -293,10 +297,11 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
                 </div>
 
           <div>
-            <label className="block text-sm font-medium text-white mb-1">
+            <label htmlFor="card-number" className="block text-sm font-medium text-white mb-1">
               Card Number
             </label>
             <input
+              id="card-number"
               type="text"
                     value={cardDetails.number}
                     onChange={(e) => setCardDetails(prev => ({ ...prev, number: e.target.value }))}
@@ -308,10 +313,11 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-white mb-1">
+              <label htmlFor="card-expiry" className="block text-sm font-medium text-white mb-1">
                 Expiry Date
               </label>
               <input
+                id="card-expiry"
                 type="text"
                       value={cardDetails.expiry}
                       onChange={(e) => setCardDetails(prev => ({ ...prev, expiry: e.target.value }))}
@@ -321,10 +327,11 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-white mb-1">
+              <label htmlFor="card-cvv" className="block text-sm font-medium text-white mb-1">
                 CVV
               </label>
               <input
+                id="card-cvv"
                 type="text"
                       value={cardDetails.cvv}
                       onChange={(e) => setCardDetails(prev => ({ ...prev, cvv: e.target.value }))}
@@ -339,10 +346,11 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
 
             {paymentMethod === 'upi' && (
               <div>
-                <label className="block text-sm font-medium text-white mb-1">
+                <label htmlFor="upi-id" className="block text-sm font-medium text-white mb-1">
                   UPI ID
                 </label>
                 <input
+                  id="upi-id"
                   type="text"
                   value={upiId}
                   onChange={(e) => setUpiId(e.target.value)}
@@ -386,21 +394,19 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
                 <span className="text-slate-300">
                   {isBidPayment ? 'Winning Bid Amount:' : 'Base Amount:'}
                 </span>
-                <span className="text-white">
-                  ${isBidPayment ? amount.toFixed(2) : (paymentType === 'booking' ? (amount * 0.2).toFixed(2) : amount.toFixed(2))}
-                </span>
+                <span className="text-white">₹{baseAmountDisplay.toFixed(2)}</span>
               </div>
               {!isBidPayment && dynamicPricing > 0 && (
                 <div className="flex justify-between">
                   <span className="text-yellow-400">Dynamic Pricing:</span>
-                  <span className="text-yellow-400">+${dynamicPricing.toFixed(2)}</span>
+                  <span className="text-yellow-400">+₹{dynamicPricing.toFixed(2)}</span>
                 </div>
               )}
               <div className="border-t border-slate-600 pt-2 mt-2">
                 <div className="flex justify-between">
                   <span className="text-lg font-semibold text-white">Total Amount:</span>
                   <span className="text-xl font-bold text-primary-400">
-                    ${isBidPayment ? amount.toFixed(2) : calculateTotalAmount().toFixed(2)}
+                    ₹{isBidPayment ? amount.toFixed(2) : calculateTotalAmount().toFixed(2)}
                   </span>
                 </div>
             </div>
@@ -431,8 +437,8 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
                   <FiCheck className="h-4 w-4" />
                   <span>
                     {isBidPayment 
-                      ? `Pay Bid Amount $${amount.toFixed(2)}`
-                      : `Pay ${calculateTotalAmount().toFixed(2)}`
+                      ? `Pay Bid Amount ₹${amount.toFixed(2)}`
+                      : `Pay ₹${calculateTotalAmount().toFixed(2)}`
                     }
                   </span>
                 </>
@@ -448,3 +454,12 @@ const PaymentModal = ({ isOpen, onClose, amount, onConfirm, loading, bookingDeta
 };
 
 export default PaymentModal; 
+
+PaymentModal.propTypes = {
+  isOpen: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  amount: PropTypes.number.isRequired,
+  onConfirm: PropTypes.func.isRequired,
+  loading: PropTypes.bool,
+  bookingDetails: PropTypes.object
+};

@@ -23,8 +23,16 @@ const SearchBar = ({ onPlaceSelected, placeholder, selectedPlace }) => {
 
   if (loadError) {
     return (
-      <div className="text-red-600">
-        Error loading Google Maps: {loadError.message}
+      <div className="relative">
+        <input
+          type="text"
+          placeholder={placeholder || "Search for a location..."}
+          className="w-full px-4 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white placeholder-slate-400"
+          disabled
+        />
+        <div className="absolute inset-0 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center justify-center">
+          <p className="text-red-400 text-xs">Maps API not configured</p>
+        </div>
       </div>
     );
   }

@@ -1,10 +1,17 @@
 import { useState, useRef, useLayoutEffect } from 'react';
-import { FiMapPin, FiNavigation, FiClock, FiPlayCircle, FiLoader, FiZap, FiX, FiChevronUp, FiChevronDown, FiFlag, FiMap, FiRefreshCw, FiInfo } from 'react-icons/fi';
+import PropTypes from 'prop-types';
+import { FiMapPin, FiNavigation, FiClock, FiPlayCircle, FiLoader, FiZap, FiChevronUp, FiChevronDown, FiFlag, FiMap, FiRefreshCw } from 'react-icons/fi';
 import { useGoogleMaps } from '../hooks/useGoogleMaps';
 import { getAllStations } from '../hooks/useFirestore';
 import { toast } from 'react-hot-toast';
 import SearchBar from '../components/SearchBar';
 import MapComponent from '../components/Map';
+
+// Routing/selection tuning constants (adjust here to tune app-wide behavior)
+const BOUNDING_BOX_BUFFER_KM = 50; // Pre-filter stations within this box around route
+const PATH_TOLERANCE_METERS = 50000; // Consider station "along route" within this distance
+const STATION_ACCEPT_DISTANCE_KM = 15; // Strict accept distance from route for a ZapGo station
+const FALLBACK_FORWARD_TOLERANCE_KM = 10; // If no station within range, consider this extra window
 
 // Clean display name for better presentation
 const cleanDisplayName = (cityName) => {
@@ -34,25 +41,50 @@ const RoutePlanner = () => {
   const [resultsPanelOpen, setResultsPanelOpen] = useState(true);
   const [mapPadding, setMapPadding] = useState({ bottom: 0 });
   const [journeyPlan, setJourneyPlan] = useState([]);
+  const [routePoints, setRoutePoints] = useState([]); // All ZapGo + intermediate points along the route
   const [reachablePoints, setReachablePoints] = useState([]);
   const [vehicleConfig, setVehicleConfig] = useState({
     currentCharge: 80,
     finalCharge: 20,
     maxRange: 300
   });
+  const [startTime, setStartTime] = useState({ hours: 9, minutes: 0, ampm: 'AM' });
   const [routeOptions, setRouteOptions] = useState({
     avoidHighways: false,
     avoidTolls: false,
     routeType: 'fastest' // 'fastest', 'shortest', 'avoidHighways'
   });
   const resultsPanelRef = useRef(null);
+  const debounceRef = useRef(null);
 
   const handleConfigChange = (e) => {
     const { name, value } = e.target;
-    setVehicleConfig(prev => ({ ...prev, [name]: Number(value) }));
+    const nextConfig = { ...vehicleConfig, [name]: Number(value) };
+    setVehicleConfig(nextConfig);
+    // Auto-replan route when range or charge settings change (debounced)
+    if (['currentCharge', 'finalCharge', 'maxRange'].includes(name)) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        if (origin && destination) {
+          planRoute(nextConfig); // use latest values
+        }
+      }, 500);
+    }
   };
 
-  const planRoute = async () => {
+  const handleStartTimeChange = (e) => {
+    const { name, value } = e.target;
+    setStartTime(prev => ({ ...prev, [name]: name === 'hours' || name === 'minutes' ? Number(value) : value }));
+    // Keep journey summary in sync on time change
+    if (origin && destination && directionsResponse) {
+      // Recompute timing only (cheaper) by re-running planRoute which will recalc itinerary times
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => planRoute(), 300);
+    }
+  };
+
+  const planRoute = async (overrideConfig) => {
+    const cfg = overrideConfig || vehicleConfig;
     if (!origin || !destination) {
       toast.error("Please select an origin and a destination.");
       return;
@@ -64,6 +96,7 @@ const RoutePlanner = () => {
     setFilteredStations([]);
     setRouteSummary(null);
     setJourneyPlan([]);
+  setRoutePoints([]);
     setReachablePoints([]);
     setResultsPanelOpen(true);
 
@@ -193,7 +226,7 @@ const RoutePlanner = () => {
       
       // 3. Get stations along the route path (not within radius)
       const routePath = route.overview_path;
-      const routeStations = await getStationsAlongRoute(routePath);
+  const routeStations = await getStationsAlongRoute(routePath);
       setFilteredStations(routeStations);
       
       // 4. Generate intermediate cities along the route using reverse geocoding
@@ -211,7 +244,7 @@ const RoutePlanner = () => {
           cumulativeDistances[i] = cumulativeDistances[i-1] + google.maps.geometry.spherical.computeDistanceBetween(decodedPolyline[i-1], decodedPolyline[i]);
       }
 
-      const stationsAlongRoute = routeStations.map(station => {
+  const stationsAlongRoute = routeStations.map(station => {
           const stationLatLng = new google.maps.LatLng(station.location.lat, station.location.lng);
           let closestPointIndex = 0;
           let minDistance = Infinity;
@@ -225,8 +258,8 @@ const RoutePlanner = () => {
               }
           });
           
-          // Strict validation: station must be within 10km of the route
-          if (minDistance > 10000) {
+          // Strict validation: station must be within configurable distance of the route
+          if (minDistance > STATION_ACCEPT_DISTANCE_KM * 1000) {
             console.log(`Station ${station.name} rejected: too far from route (${(minDistance/1000).toFixed(1)}km)`);
             return null;
           }
@@ -240,7 +273,7 @@ const RoutePlanner = () => {
               distanceFromRoute: minDistance / 1000, // Store actual distance from route
               isRegistered: true
           };
-      }).filter(Boolean).sort((a, b) => a.distanceAlongRoute - b.distanceAlongRoute);
+  }).filter(Boolean).toSorted((a, b) => a.distanceAlongRoute - b.distanceAlongRoute);
       
       console.log('Total stations along route after strict filtering:', stationsAlongRoute.length);
       console.log('Route stations with distances:', stationsAlongRoute.map(s => ({ 
@@ -255,72 +288,127 @@ const RoutePlanner = () => {
       console.log('Total route points after smart filtering:', smartRoutePoints.length);
       
       // 7. Calculate which stations are reachable with current charge
-      const currentRangeKm = (vehicleConfig.currentCharge / 100) * vehicleConfig.maxRange;
-      const finalRangeKm = (vehicleConfig.finalCharge / 100) * vehicleConfig.maxRange;
+  const currentRangeKm = Math.max(0, (cfg.currentCharge / 100) * cfg.maxRange);
+  const finalRangeKm = Math.max(0, (cfg.finalCharge / 100) * cfg.maxRange);
       const totalRouteDistanceKm = routeLeg.distance.value / 1000;
+  const totalRouteDurationMinutes = Math.round(routeLeg.duration.value / 60);
       
       const reachablePoints = smartRoutePoints.map(point => {
         const distanceFromStart = point.distanceAlongRoute;
         const distanceToDestination = totalRouteDistanceKm - distanceFromStart;
-        const isReachable = distanceFromStart <= currentRangeKm;
-        const remainingRangeAfterStop = currentRangeKm - distanceFromStart;
+        const isReachableNow = distanceFromStart <= currentRangeKm; // Can we reach this point with current charge?
+        const remainingRangeAfterArrival = Math.max(0, currentRangeKm - distanceFromStart);
         const needsChargingToReachDestination = distanceToDestination > finalRangeKm;
-        
+
         let recommendation = '';
         if (point.isRegistered) {
-          if (!isReachable) {
+          if (!isReachableNow) {
             recommendation = 'Not reachable with current charge';
           } else if (needsChargingToReachDestination) {
             recommendation = 'Recommended to charge here (needed for destination)';
-          } else if (remainingRangeAfterStop < 50) {
+          } else if (remainingRangeAfterArrival < 50) {
             recommendation = 'Recommended to charge here (low remaining range)';
           } else {
             recommendation = 'Optional stop';
           }
         } else {
+          // Intermediate cities: explicitly mark as not reachable/bookable
           recommendation = 'Intermediate city - no charging available';
         }
-        
+
         return {
           ...point,
-          isReachable,
-          remainingRangeAfterStop,
+          isReachable: point.isRegistered ? isReachableNow : false,
+          remainingRangeAfterStop: remainingRangeAfterArrival,
           needsChargingToReachDestination,
           recommendation
         };
       });
       
       console.log('Reachable points:', reachablePoints.filter(s => s.isReachable).length);
-      
-      // Store reachable points in state for use in render
-      setReachablePoints(reachablePoints);
-      
-      // 8. Build final itinerary with stations and intermediate cities
+
+  // Store reachable points (for info/legend) and expose them in summary as Route Points
+  setReachablePoints(reachablePoints);
+  setRoutePoints(reachablePoints);
+
+      // 8. Select actual charging stops using a greedy algorithm with final-charge buffer
+  const stationsOnly = stationsAlongRoute.filter(p => p.isRegistered).toSorted((a, b) => a.distanceAlongRoute - b.distanceAlongRoute);
+  // Use previously computed values
+  const maxRangeKm = cfg.maxRange;
+  const startAvailableKm = currentRangeKm;
+  const bufferKm = finalRangeKm;
+
+      let lastStopDist = 0; // distanceAlongRoute of last stop (or start)
+      let availableKm = startAvailableKm;
+      const selectedChargingStops = [];
+
+      // Continue picking stops until we can reach destination with the buffer
+      // Keep adding stops until we can reach destination while preserving final buffer
+      while ((totalRouteDistanceKm - lastStopDist) > Math.max(0, availableKm - bufferKm)) {
+        // For intermediate legs, you don't need to preserve final buffer. Use full available range to pick next stop.
+        const maxReachableDist = lastStopDist + Math.max(0, availableKm);
+        // Snapshot loop variables to avoid eslint no-loop-func warning and ensure stable closure values
+        const snapshotLastStopDist = lastStopDist;
+        const snapshotMaxReachableDist = maxReachableDist;
+        // candidate stations within reach and ahead of last stop
+        // eslint-disable-next-line no-loop-func
+        const candidates = stationsOnly.filter(
+          (s) => s.distanceAlongRoute > snapshotLastStopDist && s.distanceAlongRoute <= snapshotMaxReachableDist
+        );
+        if (candidates.length === 0) {
+          // Try a small forward tolerance to pick the nearest forward station to guide the user
+          const toleranceKm = FALLBACK_FORWARD_TOLERANCE_KM;
+          const fallback = stationsOnly.find(
+            (s) => s.distanceAlongRoute > snapshotLastStopDist && s.distanceAlongRoute <= (snapshotMaxReachableDist + toleranceKm)
+          );
+          if (!fallback) {
+            console.warn('No reachable charging station found within current range window. Stopping selection.');
+            break;
+          }
+          candidates.push(fallback);
+        }
+        const nextStop = candidates[candidates.length - 1]; // furthest reachable
+        selectedChargingStops.push(nextStop);
+        lastStopDist = nextStop.distanceAlongRoute;
+        availableKm = maxRangeKm; // assume full charge after stop
+      }
+
+      // 9. Build final itinerary (origin -> selected stops -> destination)
       const finalItinerary = [
-          { type: 'origin', name: cleanDisplayName(origin.name || routeLeg.start_address), address: routeLeg.start_address, isRegistered: false },
-          ...reachablePoints.map(point => ({
-            ...point,
-            name: cleanDisplayName(point.name)
-          })),
-          { type: 'destination', name: cleanDisplayName(destination.name || routeLeg.end_address), address: routeLeg.end_address, isRegistered: false }
+        { type: 'origin', name: cleanDisplayName(origin.name || routeLeg.start_address), address: routeLeg.start_address, isRegistered: false, distanceAlongRoute: 0 },
+        ...selectedChargingStops.map(point => ({
+          ...point,
+          name: cleanDisplayName(point.name),
+          type: 'charging',
+          isReachable: true,
+        })),
+        { type: 'destination', name: cleanDisplayName(destination.name || routeLeg.end_address), address: routeLeg.end_address, isRegistered: false, distanceAlongRoute: totalRouteDistanceKm }
       ];
-      setJourneyPlan(finalItinerary);
-      
+      // Compute timing details for selected stops and destination
+      const departureMinutes = toMinutesSinceMidnight(startTime);
+      const withTiming = addTimingToItinerary(finalItinerary, routeLeg, departureMinutes, cfg, finalRangeKm);
+      setJourneyPlan(withTiming);
+
       const finalRouteStops = [
-          { lat: origin.geometry.location.lat(), lng: origin.geometry.location.lng(), name: 'Start', type: 'start' },
-          ...reachablePoints.map(s => ({ 
-            lat: s.location.lat, 
-            lng: s.location.lng, 
-            name: cleanDisplayName(s.name), 
-            type: s.isRegistered ? 'charging' : 'intermediate',
-            isRegistered: s.isRegistered
-          })),
-          { lat: destination.geometry.location.lat(), lng: destination.geometry.location.lng(), name: 'End', 'type': 'end' }
+        { lat: origin.geometry.location.lat(), lng: origin.geometry.location.lng(), name: 'Start', type: 'start' },
+        ...selectedChargingStops.map(s => ({
+          lat: s.location.lat,
+          lng: s.location.lng,
+          name: cleanDisplayName(s.name),
+          type: 'charging',
+          isRegistered: true,
+        })),
+        { lat: destination.geometry.location.lat(), lng: destination.geometry.location.lng(), name: 'End', type: 'end' }
       ];
       setRouteStops(finalRouteStops);
+      const totalChargeMinutes = withTiming
+        .filter(s => s.type === 'charging')
+        .reduce((sum, s) => sum + (s.chargeDurationMinutes || 0), 0);
+      const etaWithCharging = formatDurationMinutes(totalRouteDurationMinutes + totalChargeMinutes);
       setRouteSummary({ 
         distance: routeLeg.distance.text, 
         duration: routeLeg.duration.text,
+        durationWithCharging: etaWithCharging,
         stations: reachablePoints.filter(p => p.isRegistered).length,
         totalPoints: reachablePoints.length
       });
@@ -329,9 +417,9 @@ const RoutePlanner = () => {
       console.log('=== FINAL ROUTE SUMMARY ===');
       console.log('Total route distance:', routeLeg.distance.text);
       console.log('Total route duration:', routeLeg.duration.text);
-      console.log('ZapGo stations on route:', reachablePoints.filter(p => p.isRegistered).length);
-      console.log('Intermediate cities on route:', reachablePoints.filter(p => !p.isRegistered).length);
-      console.log('Total route points:', reachablePoints.length);
+  console.log('ZapGo stations on route:', reachablePoints.filter(p => p.isRegistered).length);
+  console.log('Selected charging stops:', finalItinerary.filter(p => p.type === 'charging').length);
+  console.log('Total route points (candidates):', reachablePoints.length);
       console.log('Route points breakdown:');
       reachablePoints.forEach((point, index) => {
         console.log(`${index + 1}. ${cleanDisplayName(point.name)} (${point.isRegistered ? 'ZapGo Station' : 'Intermediate City'}) - ${point.distanceAlongRoute.toFixed(1)}km from start`);
@@ -416,9 +504,6 @@ const RoutePlanner = () => {
       yy = lineStart.lng() + param * D;
     }
 
-    const dx = point.lat() - xx;
-    const dy = point.lng() - yy;
-    
     // Convert to meters using spherical distance
     const closestPoint = new google.maps.LatLng(xx, yy);
     return google.maps.geometry.spherical.computeDistanceBetween(point, closestPoint);
@@ -464,14 +549,14 @@ const RoutePlanner = () => {
       console.log('Raw stations from database:', allStations);
       
       // Create bounding box for efficient pre-filtering
-      const boundingBox = createRouteBoundingBox(routePath, 50); // Increased buffer to 50km
+  const boundingBox = createRouteBoundingBox(routePath, BOUNDING_BOX_BUFFER_KM);
       
-      // Filter stations to only those along the route path
-      return allStations.filter(station => {
+      // Filter stations to only those along the route path, and normalize objects
+      return allStations.map(station => {
         // Check if station has valid location data
         if (!station.location) {
           console.warn('Station missing location:', station);
-          return false;
+          return null;
         }
         
         // Handle different location formats
@@ -487,19 +572,26 @@ const RoutePlanner = () => {
           lng = station.location[1];
         } else {
           console.warn('Station has invalid location format:', station);
-          return false;
+          return null;
         }
         
         const stationLatLng = new google.maps.LatLng(lat, lng);
         
         // First, check if station is within bounding box (fast pre-filter)
-        if (!isPointInBoundingBox(stationLatLng, boundingBox)) {
-          return false;
-        }
+        if (!isPointInBoundingBox(stationLatLng, boundingBox)) return null;
         
         // Then, check if station is actually along the route path (accurate check)
-        return isPointAlongPath(stationLatLng, routePath, 50000); // Increased tolerance to 50km
-      });
+  const along = isPointAlongPath(stationLatLng, routePath, PATH_TOLERANCE_METERS);
+        if (!along) return null;
+        // Normalize and mark as registered
+        return {
+          ...station,
+          id: station.id || station.name || `${lat},${lng}`,
+          location: { lat, lng, address: station.location?.address || station.address },
+          isRegistered: true,
+          type: 'charging',
+        };
+      }).filter(Boolean);
     } catch (error) {
       console.error('Error fetching ZapGo stations along route:', error);
       return [];
@@ -716,7 +808,7 @@ const RoutePlanner = () => {
       });
 
       // Sort by distance along route
-      const sortedPoints = deduplicatedPoints.sort((a, b) => a.distanceAlongRoute - b.distanceAlongRoute);
+  const sortedPoints = deduplicatedPoints.toSorted((a, b) => a.distanceAlongRoute - b.distanceAlongRoute);
       
       // Smart filtering to get 10-12 meaningful points with good spacing
       const totalRouteDistance = cumulativeDistances[cumulativeDistances.length - 1] / 1000;
@@ -746,7 +838,7 @@ const RoutePlanner = () => {
       }
       
       // Sort again by distance
-      const finalPoints = smartFilteredPoints.sort((a, b) => a.distanceAlongRoute - b.distanceAlongRoute);
+  const finalPoints = smartFilteredPoints.toSorted((a, b) => a.distanceAlongRoute - b.distanceAlongRoute);
       
       console.log('Smart filtering results:');
       console.log('- Total route distance:', totalRouteDistance.toFixed(1), 'km');
@@ -804,7 +896,7 @@ const RoutePlanner = () => {
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Origin</label>
+              <p className="block text-sm font-medium text-slate-300 mb-2">Origin</p>
               <SearchBar
                 placeholder="Enter starting point..."
                 onPlaceSelected={setOrigin}
@@ -812,7 +904,7 @@ const RoutePlanner = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Destination</label>
+              <p className="block text-sm font-medium text-slate-300 mb-2">Destination</p>
               <SearchBar
                 placeholder="Enter destination..."
                 onPlaceSelected={setDestination}
@@ -829,8 +921,9 @@ const RoutePlanner = () => {
             </h3>
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Current Charge (%)</label>
+                <label htmlFor="currentCharge" className="block text-sm font-medium text-slate-300 mb-1">Current Charge (%)</label>
                 <input
+                  id="currentCharge"
                   type="number"
                   name="currentCharge"
                   min="0"
@@ -841,8 +934,9 @@ const RoutePlanner = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Final Charge (%)</label>
+                <label htmlFor="finalCharge" className="block text-sm font-medium text-slate-300 mb-1">Final Charge (%)</label>
                 <input
+                  id="finalCharge"
                   type="number"
                   name="finalCharge"
                   min="0"
@@ -853,8 +947,9 @@ const RoutePlanner = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">Max Range (km)</label>
+                <label htmlFor="maxRange" className="block text-sm font-medium text-slate-300 mb-1">Max Range (km)</label>
                 <input
+                  id="maxRange"
                   type="number"
                   name="maxRange"
                   min="50"
@@ -863,6 +958,52 @@ const RoutePlanner = () => {
                   onChange={handleConfigChange}
                   className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:ring-2 focus:ring-primary-500 focus:outline-none"
                 />
+              </div>
+            </div>
+
+            {/* Start Time */}
+            <div className="mt-2">
+              <label className="block text-sm font-medium text-slate-300 mb-1">Starting Time</label>
+              <div className="grid grid-cols-5 gap-3 items-end">
+                <div className="col-span-2">
+                  <label htmlFor="hours" className="block text-xs text-slate-400">Hours</label>
+                  <input
+                    id="hours"
+                    type="number"
+                    name="hours"
+                    min="1"
+                    max="12"
+                    value={startTime.hours}
+                    onChange={handleStartTimeChange}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label htmlFor="minutes" className="block text-xs text-slate-400">Minutes</label>
+                  <input
+                    id="minutes"
+                    type="number"
+                    name="minutes"
+                    min="0"
+                    max="59"
+                    value={startTime.minutes}
+                    onChange={handleStartTimeChange}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="ampm" className="block text-xs text-slate-400">AM/PM</label>
+                  <select
+                    id="ampm"
+                    name="ampm"
+                    value={startTime.ampm}
+                    onChange={handleStartTimeChange}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option>AM</option>
+                    <option>PM</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
@@ -923,7 +1064,7 @@ const RoutePlanner = () => {
           </div>
 
           <button
-            onClick={planRoute}
+            onClick={() => planRoute()}
             disabled={loading || !origin || !destination}
             className="w-full bg-gradient-to-r from-primary-500 to-primary-600 text-white font-semibold py-3 px-4 rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
           >
@@ -980,6 +1121,12 @@ const RoutePlanner = () => {
                     <FiClock className="text-slate-400"/>
                     <span>{routeSummary.duration}</span>
                   </div>
+                    {routeSummary.durationWithCharging && (
+                      <div className="flex items-center space-x-2 text-sm">
+                        <FiClock className="text-slate-400"/>
+                        <span>With Charging: {routeSummary.durationWithCharging}</span>
+                      </div>
+                    )}
                   {resultsPanelOpen ? <FiChevronDown className="h-6 w-6" /> : <FiChevronUp className="h-6 w-6" />}
                 </div>
               </button>
@@ -1003,7 +1150,7 @@ const RoutePlanner = () => {
                       </span>
                     </div>
                     <button
-                      onClick={planRoute}
+                      onClick={() => planRoute()}
                       disabled={loading}
                       className="bg-primary-500 hover:bg-primary-600 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                     >
@@ -1016,9 +1163,28 @@ const RoutePlanner = () => {
                   </div>
                   <div className="space-y-4">
                     {journeyPlan.map((step, index) => (
-                      <JourneyStep key={index} step={step} index={index} isLast={index === journeyPlan.length - 1} />
+                      <JourneyStep key={step.id || `${step.type}-${step.name}`} step={step} index={index} isLast={index === journeyPlan.length - 1} />
                     ))}
                   </div>
+
+                  {/* Route Points: Show all ZapGo stations and intermediate cities along the route */}
+                  {routePoints.length > 0 && (
+                    <div className="mt-6">
+                      <h4 className="text-md font-semibold text-white mb-3 flex items-center">
+                        <FiMapPin className="mr-2" /> Route Points (ZapGo & Intermediate)
+                      </h4>
+                      <div className="space-y-4">
+                        {routePoints.map((point, idx) => (
+                          <JourneyStep
+                            key={point.id || `${point.type}-${point.name}-${idx}`}
+                            step={point}
+                            index={idx}
+                            isLast={idx === routePoints.length - 1}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1030,6 +1196,7 @@ const RoutePlanner = () => {
 };
 
 // A new component to render each step of the journey for clarity
+
 const JourneyStep = ({ step, index, isLast }) => {
     let icon;
     let titleColor = 'text-white';
@@ -1113,20 +1280,48 @@ const JourneyStep = ({ step, index, isLast }) => {
                         <h4 className={`font-semibold ${titleColor}`}>{displayName}</h4>
                         {statusBadge}
                     </div>
-                    {step.isRegistered && step.type === 'charging' && (
+                    {step.type === 'charging' && (
                         <button
                             onClick={() => handleBookStation(step)}
                             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-slate-800 ${
-                                step.isReachable 
+                step.isRegistered && step.isReachable 
                                     ? 'bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white' 
                                     : 'bg-slate-600 hover:bg-slate-500 text-slate-300 cursor-not-allowed'
                             }`}
-                            disabled={!step.isReachable}
-                            title={!step.isReachable ? 'Not reachable with current charge' : 'Book this station'}
+              disabled={!(step.isRegistered && step.isReachable)}
+              title={!(step.isRegistered && step.isReachable) ? (step.isRegistered ? 'Not reachable with current charge' : 'Not a ZapGo station') : 'Book this station'}
                         >
-                            {step.isReachable ? 'Book Now' : 'Not Reachable'}
+              {step.isRegistered ? (step.isReachable ? 'Book Now' : 'Not Reachable') : 'Unavailable'}
                         </button>
                     )}
+                </div>
+                {/* Timing details */}
+                <div className="mt-2 text-sm text-slate-300 space-y-1">
+                  {step.type === 'origin' && (
+                    <div>Departure: {step.departureTimeLabel}</div>
+                  )}
+                  {step.type === 'charging' && (
+                    <>
+                      {step.arrivalTimeLabel && <div>Arrival: {step.arrivalTimeLabel}</div>}
+                      {typeof step.chargeDurationMinutes === 'number' && (
+                        <div>Charge Duration: {step.chargeDurationMinutes} mins</div>
+                      )}
+                      {typeof step.legDistanceKm === 'number' && (
+                        <div>Leg Distance: {step.legDistanceKm} km</div>
+                      )}
+                      {typeof step.remainingRangeAfterArrivalKm === 'number' && (
+                        <div>Remaining Range on Arrival: {step.remainingRangeAfterArrivalKm} km</div>
+                      )}
+                    </>
+                  )}
+                  {step.type === 'destination' && step.arrivalTimeLabel && (
+                    <div>
+                      <div>Arrival: {step.arrivalTimeLabel}</div>
+                      {typeof step.legDistanceKm === 'number' && (
+                        <div>Final Leg: {step.legDistanceKm} km</div>
+                      )}
+                    </div>
+                  )}
                 </div>
             </div>
         </div>
@@ -1140,3 +1335,110 @@ const handleBookStation = (station) => {
 };
 
 export default RoutePlanner; 
+
+JourneyStep.propTypes = {
+  step: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string.isRequired,
+    type: PropTypes.string.isRequired,
+    isRegistered: PropTypes.bool,
+    isReachable: PropTypes.bool,
+    needsChargingToReachDestination: PropTypes.bool,
+    remainingRangeAfterStop: PropTypes.number,
+    arrivalTimeLabel: PropTypes.string,
+    departureTimeLabel: PropTypes.string,
+    chargeDurationMinutes: PropTypes.number,
+    legDistanceKm: PropTypes.number,
+    remainingRangeAfterArrivalKm: PropTypes.number,
+  }).isRequired,
+  index: PropTypes.number.isRequired,
+  isLast: PropTypes.bool.isRequired,
+};
+
+// Helpers
+function toMinutesSinceMidnight(t) {
+  const h = t.ampm === 'PM' && t.hours !== 12 ? t.hours + 12 : t.ampm === 'AM' && t.hours === 12 ? 0 : t.hours;
+  return h * 60 + (t.minutes || 0);
+}
+
+function formatTimeLabel(minutesSinceMidnight) {
+  const mins = ((minutesSinceMidnight % (24 * 60)) + 24 * 60) % (24 * 60);
+  const h24 = Math.floor(mins / 60);
+  const m = mins % 60;
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function formatDurationMinutes(totalMins) {
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} hr`;
+  return `${h} hr ${m} min`;
+}
+
+function travelMinutesTo(distanceKm, routeLeg) {
+  // Precise accumulation over steps with linear interpolation inside the step
+  const targetMeters = distanceKm * 1000;
+  let cumDist = 0;
+  let cumTimeSec = 0;
+  for (const step of routeLeg.steps) {
+    const stepDist = step.distance.value; // meters
+    const stepTime = step.duration.value; // seconds
+    if (cumDist + stepDist >= targetMeters) {
+      const remaining = targetMeters - cumDist;
+      const ratio = Math.max(0, Math.min(1, remaining / stepDist));
+      return Math.round((cumTimeSec + ratio * stepTime) / 60);
+    }
+    cumDist += stepDist;
+    cumTimeSec += stepTime;
+  }
+  return Math.round(cumTimeSec / 60);
+}
+
+function estimateChargeDurationMinutes(currentStopKm, nextTargetKm, cfg, finalRangeKm) {
+  // Heuristic: more gap to next target => longer charge, bounded 20-60 mins
+  const gapKm = Math.max(0, (nextTargetKm - currentStopKm) + finalRangeKm);
+  const proportion = Math.max(0, Math.min(1, gapKm / Math.max(1, cfg.maxRange)));
+  return Math.round(20 + proportion * 40); // 20..60 mins
+}
+
+function addTimingToItinerary(itinerary, routeLeg, departureMinutes, cfg, finalRangeKm) {
+  let totalChargeMinutes = 0;
+  const withTiming = itinerary.map((step, idx) => {
+    if (step.type === 'origin') {
+      return { ...step, departureTimeLabel: formatTimeLabel(departureMinutes) };
+    }
+    if (step.type === 'charging') {
+      const travelMins = travelMinutesTo(step.distanceAlongRoute, routeLeg);
+      const arrival = departureMinutes + travelMins + totalChargeMinutes;
+      const nextTargetKm = (() => {
+        const next = itinerary.slice(idx + 1).find(s => s.type === 'charging' || s.type === 'destination');
+        if (next && next.distanceAlongRoute != null) return next.distanceAlongRoute;
+        // If next is destination without distanceAlongRoute, use total route distance
+        const totalKm = routeLeg.distance.value / 1000;
+        return totalKm;
+      })();
+      const chargeMin = estimateChargeDurationMinutes(step.distanceAlongRoute, nextTargetKm, cfg, finalRangeKm);
+      totalChargeMinutes += chargeMin;
+      const legDistanceKm = Math.max(0, step.distanceAlongRoute - (itinerary[idx - 1]?.distanceAlongRoute ?? 0));
+      const remainingRangeAfterArrivalKm = Math.max(0, cfg.maxRange - legDistanceKm); // assumes start of leg full or previous residual; simplified
+      return {
+        ...step,
+        arrivalTimeLabel: formatTimeLabel(arrival),
+        chargeDurationMinutes: chargeMin,
+        legDistanceKm: Math.round(legDistanceKm * 10) / 10,
+        remainingRangeAfterArrivalKm: Math.round(remainingRangeAfterArrivalKm * 10) / 10,
+      };
+    }
+    if (step.type === 'destination') {
+      const baseTravelMins = Math.round(routeLeg.duration.value / 60);
+      const arrival = departureMinutes + baseTravelMins + totalChargeMinutes;
+      const legDistanceKm = Math.max(0, step.distanceAlongRoute - (itinerary[idx - 1]?.distanceAlongRoute ?? 0));
+      return { ...step, arrivalTimeLabel: formatTimeLabel(arrival), legDistanceKm: Math.round(legDistanceKm * 10) / 10 };
+    }
+    return step;
+  });
+  return withTiming;
+}

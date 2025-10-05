@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { collection, query, where, getDocs, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import toast from 'react-hot-toast';
 import AddStationForm from '../components/AddStationForm';
-import { FiEdit, FiTrash2, FiPlus, FiBarChart2, FiDollarSign, FiZap, FiBookOpen, FiLoader } from 'react-icons/fi';
+import { FiEdit, FiTrash2, FiPlus, FiDollarSign, FiZap, FiBookOpen, FiLoader } from 'react-icons/fi';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { ethers } from 'ethers';
 import { BOOKING_CONTRACT_ADDRESS } from '../config/blockchain';
@@ -30,19 +31,7 @@ const StationManagerDashboard = () => {
     weeklyRevenueData: [],
   });
 
-  useEffect(() => {
-    if (user?.uid) {
-      fetchData();
-    }
-  }, [user]);
-
-  const handleProfileComplete = () => {
-    // Refetch data to ensure dashboard is up-to-date
-    // The user object in useAuth will also update automatically
-    fetchData();
-  };
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       // Fetch stations
@@ -116,7 +105,20 @@ const StationManagerDashboard = () => {
     } finally {
       setLoading(false);
     }
+  }, [user, setLoading, setStations, setBookings, setPendingBookings, setStats]);
+
+  useEffect(() => {
+    if (user?.uid) {
+      fetchData();
+    }
+  }, [user, fetchData]);
+
+  const handleProfileComplete = () => {
+    // Refetch data to ensure dashboard is up-to-date
+    // The user object in useAuth will also update automatically
+    fetchData();
   };
+
 
   const handleDeleteStation = async (stationId) => {
     if (window.confirm('Are you sure you want to delete this station?')) {
@@ -173,13 +175,14 @@ const StationManagerDashboard = () => {
 
       const userWalletAddress = booking.userWalletAddress || "0x0000000000000000000000000000000000000000"; // Placeholder if not available
       const startTime = booking.startTime;
-      const endTime = new Date(startTime.getTime() + booking.duration * 60 * 60 * 1000);
+      // booking.duration is in minutes; convert minutes -> ms for end time
+      const endTime = new Date(startTime.getTime() + booking.duration * 60 * 1000);
 
       // Find an available port
       const stationDocRef = doc(db, 'stations', booking.stationId);
       const stationDoc = await getDoc(stationDocRef);
       const stationData = stationDoc.data();
-      const totalPorts = stationData.totalSlots || 5; // Use totalSlots or a default
+  const totalPorts = stationData.totalSlots || 5; // Use totalSlots or a default
 
       const bookingsRef = collection(db, 'bookings');
       const q = query(
@@ -192,7 +195,8 @@ const StationManagerDashboard = () => {
         .map(d => d.data())
         .filter(b => {
           const existingStart = b.startTime.toDate();
-          const existingEnd = new Date(existingStart.getTime() + b.duration * 60 * 60 * 1000);
+                    // durations stored in minutes; convert to ms
+                    const existingEnd = new Date(existingStart.getTime() + b.duration * 60 * 1000);
           return (startTime < existingEnd && endTime > existingStart);
         });
 
@@ -287,8 +291,8 @@ const StationManagerDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <StatCard icon={<FiZap />} title="Total Stations" value={stats.totalStations} color="blue" />
             <StatCard icon={<FiBookOpen />} title="Active Bookings" value={stats.activeBookings} color="green" />
-            <StatCard icon={<FiDollarSign />} title="Total Revenue" value={`$${stats.totalRevenue.toFixed(2)}`} color="purple" />
-            <StatCard icon={<FiDollarSign />} title="Bid Revenue" value={`$${stats.totalBidRevenue.toFixed(2)}`} color="yellow" />
+            <StatCard icon={<FiDollarSign />} title="Total Revenue" value={`₹${stats.totalRevenue.toFixed(2)}`} color="purple" />
+            <StatCard icon={<FiDollarSign />} title="Bid Revenue" value={`₹${stats.totalBidRevenue.toFixed(2)}`} color="yellow" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -310,8 +314,8 @@ const StationManagerDashboard = () => {
                                               <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs font-semibold rounded-full border border-yellow-500/30">
                                                   🏆 Bid Winner
                                               </span>
-                                              <span className="text-yellow-400 font-semibold">
-                                                  ${booking.bidAmount || booking.totalPrice}
+                        <span className="text-yellow-400 font-semibold">
+                          ₹{booking.bidAmount || booking.totalPrice}
                                               </span>
                                           </div>
                                       )}
@@ -335,8 +339,8 @@ const StationManagerDashboard = () => {
                                 <div>
                                     <h3 className="font-semibold text-lg">{station.name}</h3>
                                     <p className="text-sm text-slate-400">{station.address}</p>
-                                    <p className="text-sm text-slate-300 mt-1">
-                                        Slots: {station.availableSlots}/{station.totalSlots} | Price: ₹{station.pricePerHour}/hr
+                  <p className="text-sm text-slate-300 mt-1">
+                    Ports: {station.availableSlots}/{station.totalSlots} | Price: ₹{station.pricePerHour}/hr
                                     </p>
                                 </div>
                                 <div className="flex items-center space-x-3">
@@ -366,8 +370,8 @@ const StationManagerDashboard = () => {
                                 </div>
                                 <div className="text-right">
                                     <p className="text-sm">{b.startTime.toLocaleString()}</p>
-                                    <p className={`font-semibold ${b.bookingType === 'bid' ? 'text-yellow-400' : 'text-primary-400'}`}>
-                                        ${b.totalPrice}
+                  <p className={`font-semibold ${b.bookingType === 'bid' ? 'text-yellow-400' : 'text-primary-400'}`}>
+                    ₹{b.totalPrice}
                                     </p>
                                     {b.transactionHash && (
                                         <a href={`https://sepolia.etherscan.io/tx/${b.transactionHash}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:underline">
@@ -425,3 +429,10 @@ const StatCard = ({ icon, title, value, color }) => {
 }
 
 export default StationManagerDashboard; 
+
+StatCard.propTypes = {
+  icon: PropTypes.node.isRequired,
+  title: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+  color: PropTypes.oneOf(['blue', 'green', 'purple', 'yellow']).isRequired,
+};

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { FcGoogle } from 'react-icons/fc';
 import { FiMail, FiLock, FiZap } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 
@@ -9,8 +8,7 @@ const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
-  const { login, loginWithGoogle } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -33,21 +31,7 @@ const Login = () => {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setGoogleLoading(true);
-    try {
-      await loginWithGoogle();
-      toast.success('Logged in with Google successfully!');
-      navigate('/');
-    } catch (error) {
-      console.error('Google login error:', error);
-      if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
-        toast.error(error.message || 'Failed to sign in with Google.');
-      }
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
+  // Google login UI/handler removed to clear unused warnings. Re-add if needed.
 
   return (
     <div className="min-h-screen-minus-nav flex items-center justify-center text-white font-sans p-4">

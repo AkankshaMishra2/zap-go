@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { FiSearch, FiZap, FiLoader, FiAlertTriangle, FiInbox, FiMapPin, FiClock, FiDollarSign } from 'react-icons/fi';
 import Map from '../components/Map';
 import { useStations } from '../hooks/useFirestore';
-import React from 'react';
+import PropTypes from 'prop-types';
 
 // --- Station Card Component ---
 const StationCard = ({ station }) => (
@@ -14,7 +14,7 @@ const StationCard = ({ station }) => (
           {station.name || 'Unnamed Station'}
         </h3>
         <div className={`flex items-center space-x-2 text-sm font-semibold px-3 py-1 rounded-full
-          ${station.status === 'available' ? 'bg-green-500/20 text-green-300 border border-green-500/30' : 
+                  ${station.status === 'available' ? 'bg-green-500/20 text-green-300 border border-green-500/30' : 
             'bg-orange-500/20 text-orange-400 border border-orange-500/30'}`}
         >
           <FiZap className="w-4 h-4" />
@@ -27,15 +27,15 @@ const StationCard = ({ station }) => (
           <FiMapPin className="mr-3 mt-1 h-4 w-4 flex-shrink-0" />
           <span className="line-clamp-2">{station.location?.address || station.address || 'No address provided'}</span>
         </p>
-        {typeof station.availableSlots === 'number' && typeof station.totalPorts === 'number' ? (
+                {typeof station.availableSlots === 'number' && typeof station.totalPorts === 'number' ? (
           <div className="flex items-center text-slate-400">
             <FiClock className="mr-3 h-4 w-4" />
-            <span>{station.availableSlots} / {station.totalPorts} slots available</span>
+                    <span>{station.availableSlots} / {station.totalPorts} ports available</span>
           </div>
         ) : null}
         <div className="flex items-center text-slate-400">
           <FiDollarSign className="mr-3 h-4 w-4" />
-          <span>${station.pricePerHour ?? 'N/A'}/hour</span>
+          <span>₹{station.pricePerHour ?? 'N/A'}/hr</span>
         </div>
       </div>
       
@@ -47,6 +47,18 @@ const StationCard = ({ station }) => (
     </div>
   </Link>
 );
+
+StationCard.propTypes = {
+  station: PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    name: PropTypes.string,
+    status: PropTypes.string,
+    location: PropTypes.object,
+    totalPorts: PropTypes.number,
+    availableSlots: PropTypes.number,
+    pricePerHour: PropTypes.number,
+  }).isRequired,
+};
 
 // --- Main Home Component ---
 const Home = () => {

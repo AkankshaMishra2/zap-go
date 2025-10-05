@@ -207,7 +207,20 @@ const Map = ({ center = defaultCenter, zoom = defaultZoom, stations = [], onStat
   if (loadError) {
     return (
       <div className="flex items-center justify-center h-[400px] bg-gray-100">
-        <p className="text-red-600">Error loading maps: {loadError.message}</p>
+        <div className="text-center p-6">
+          <div className="text-red-600 text-4xl mb-4">🗺️</div>
+          <p className="text-red-600 font-semibold mb-2">Map Services Unavailable</p>
+          <p className="text-gray-600 text-sm mb-4">Google Maps API key is not configured</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-left">
+            <p className="text-blue-800 text-sm font-medium mb-2">To fix this:</p>
+            <ol className="text-blue-700 text-xs space-y-1">
+              <li>1. Create a <code className="bg-blue-100 px-1 rounded">.env</code> file in your project root</li>
+              <li>2. Add: <code className="bg-blue-100 px-1 rounded">REACT_APP_GOOGLE_MAPS_API_KEY=your_api_key_here</code></li>
+              <li>3. Get an API key from Google Cloud Console</li>
+              <li>4. Restart your development server</li>
+            </ol>
+          </div>
+        </div>
       </div>
     );
   }
@@ -309,7 +322,7 @@ const Map = ({ center = defaultCenter, zoom = defaultZoom, stations = [], onStat
                     )}
                     {selectedStation.availableSlots && (
                       <p className="text-sm">
-                        <span className="font-bold text-gray-700">Available Slots:</span> 
+                        <span className="font-bold text-gray-700">Available Ports:</span> 
                         <span className="ml-1 text-gray-600">{selectedStation.availableSlots ?? 'N/A'}</span>
                       </p>
                     )}

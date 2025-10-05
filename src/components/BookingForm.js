@@ -5,9 +5,7 @@ import { db } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 import PaymentModal from './PaymentModal';
-import { ethers } from 'ethers';
-import { BOOKING_CONTRACT_ADDRESS } from '../config/blockchain';
-import BookingArtifact from '../Booking.json';
+import PropTypes from 'prop-types';
 
 const BookingForm = ({ station, onSubmit, isBooking }) => {
   const { user } = useAuth();
@@ -16,36 +14,22 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [bookingDate, setBookingDate] = useState(new Date().toISOString().split('T')[0]);
   const [startTime, setStartTime] = useState('10:00');
-  const [duration, setDuration] = useState(1); // in hours
+  const [duration, setDuration] = useState(60); // in minutes
   const [vehicleType, setVehicleType] = useState('car');
   const [totalPrice, setTotalPrice] = useState(station.pricePerHour);
 
-  const connectWallet = async () => {
-    try {
-      if (!window.ethereum) {
-        toast.error("MetaMask is not installed. Please install it to use this feature.");
-        return null;
-      }
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      await provider.send("eth_requestAccounts", []);
-      const signer = await provider.getSigner();
-      return signer;
-    } catch (error) {
-      console.error("Failed to connect wallet:", error);
-      toast.error("Failed to connect wallet. Please try again.");
-      return null;
-    }
-  };
+  // Wallet connection is handled during on-chain confirmation by station manager
 
   useEffect(() => {
     if (station && station.pricePerHour && duration > 0) {
-      setTotalPrice(station.pricePerHour * duration);
+      // Convert minutes to hours for price calculation
+      setTotalPrice(station.pricePerHour * (duration / 60));
     }
   }, [duration, station]);
 
   const checkSlotAvailability = async () => {
     const bookingStartTime = new Date(`${bookingDate}T${startTime}`);
-    const bookingEndTime = new Date(bookingStartTime.getTime() + parseInt(duration) * 60 * 60 * 1000);
+  const bookingEndTime = new Date(bookingStartTime.getTime() + parseInt(duration) * 60 * 1000);
 
     // Query for overlapping bookings
     const bookingsRef = collection(db, 'bookings');
@@ -64,7 +48,7 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
     // Check for overlapping bookings
     const hasOverlap = bookings.some(booking => {
       const existingBookingStart = booking.startTime.toDate();
-      const existingBookingEnd = new Date(existingBookingStart.getTime() + booking.duration * 60 * 60 * 1000);
+  const existingBookingEnd = new Date(existingBookingStart.getTime() + booking.duration * 60 * 1000);
       
       return (
         (bookingStartTime >= existingBookingStart && bookingStartTime < existingBookingEnd) ||
@@ -74,7 +58,7 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
     });
 
     if (hasOverlap) {
-      toast.error('This time slot is already booked. Please choose another time.');
+      toast.error('This time window is already booked. Please choose another time.');
       return false;
     }
 
@@ -91,7 +75,7 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
     }
 
     if (station.availableSlots <= 0) {
-      toast.error('No available slots at this station');
+      toast.error('No available ports at this station');
       return;
     }
 
@@ -133,7 +117,7 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
         userId: user.uid,
         userName: user.displayName || user.email,
         startTime: bookingStartTime,
-        duration: parseInt(duration),
+  duration: parseInt(duration), // minutes
         vehicleType: vehicleType,
         notes: '',
         status: 'pending', // Status is now 'pending'
@@ -151,7 +135,7 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
       };
 
       // Create booking in Firestore
-      const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
+  await addDoc(collection(db, 'bookings'), bookingData);
 
       // Update station's available slots
       await updateDoc(doc(db, 'stations', station.id), {
@@ -203,16 +187,16 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
         </div>
 
         <div>
-          <label htmlFor="duration" className="block text-sm font-medium text-white">
-            Duration (hours)
+            <label htmlFor="duration" className="block text-sm font-medium text-white">
+            Duration (minutes)
           </label>
           <input
             type="number"
             id="duration"
             value={duration}
             onChange={(e) => setDuration(Number(e.target.value))}
-            min="1"
-            max="8"
+            min="15"
+            step="5"
             className="mt-1 block w-full px-3 py-2 border border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm bg-slate-700 text-white"
             required
           />
@@ -237,10 +221,10 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
         <div className="border-t border-slate-600 pt-4">
           <div className="flex justify-between items-center">
             <p className="text-lg font-semibold text-white">Total Price:</p>
-            <p className="text-2xl font-bold text-primary-400">${totalPrice.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-primary-400">₹{totalPrice.toFixed(2)}</p>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Choose between 20% booking payment or full payment during checkout
+            Choose between 10% booking payment or full payment during checkout
           </p>
         </div>
 
@@ -250,7 +234,7 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
             disabled={isBooking || station.availableSlots <= 0}
             className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition-opacity"
           >
-            {isBooking ? 'Processing...' : (station.availableSlots > 0 ? 'Proceed to Payment' : 'Slots Unavailable')}
+            {isBooking ? 'Processing...' : (station.availableSlots > 0 ? 'Proceed to Payment' : 'Ports Unavailable')}
           </button>
         </div>
       </form>
@@ -276,3 +260,14 @@ const BookingForm = ({ station, onSubmit, isBooking }) => {
 };
 
 export default BookingForm; 
+
+BookingForm.propTypes = {
+  station: PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    name: PropTypes.string,
+    pricePerHour: PropTypes.number,
+    availableSlots: PropTypes.number,
+  }).isRequired,
+  onSubmit: PropTypes.func,
+  isBooking: PropTypes.bool,
+};

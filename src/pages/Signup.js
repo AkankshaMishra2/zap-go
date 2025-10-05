@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { FiUser, FiMail, FiLock, FiBriefcase, FiMapPin, FiLogIn } from 'react-icons/fi';
+import { FiUser, FiMail, FiLock, FiBriefcase, FiMapPin } from 'react-icons/fi';
 import { Autocomplete, useLoadScript } from '@react-google-maps/api';
 
 const libraries = ['places'];

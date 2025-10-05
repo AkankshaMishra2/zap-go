@@ -1,8 +1,8 @@
-import { Fragment, useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Toaster } from 'react-hot-toast';
-import { FiZap, FiLogOut, FiUser, FiMenu, FiX, FiMap, FiList, FiCompass, FiSettings, FiBarChart } from 'react-icons/fi';
+import { FiZap, FiLogOut, FiMenu, FiX, FiMap, FiList, FiCompass, FiSettings, FiBarChart } from 'react-icons/fi';
 
 const Layout = ({ children }) => {
   const { user, logout } = useAuth();

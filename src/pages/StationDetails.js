@@ -8,6 +8,7 @@ import toast from 'react-hot-toast';
 import { FiMapPin, FiClock, FiDollarSign, FiZap, FiX, FiLoader, FiAlertTriangle, FiWifi, FiCoffee, FiShoppingCart } from 'react-icons/fi';
 
 import Map from '../components/Map';
+import PropTypes from 'prop-types';
 import BookingForm from '../components/BookingForm';
 import PaymentModal from '../components/PaymentModal';
 
@@ -20,6 +21,10 @@ const AmenityIcon = ({ amenity }) => {
   };
   const lowerCaseAmenity = amenity.toLowerCase();
   return iconMap[lowerCaseAmenity] || <FiZap className="mr-2 h-5 w-5 text-primary-400" />;
+};
+
+AmenityIcon.propTypes = {
+  amenity: PropTypes.string.isRequired,
 };
 
 const StationDetails = () => {
@@ -50,7 +55,7 @@ const StationDetails = () => {
       const currentStation = stationDoc.data();
 
       if (currentStation.availableSlots <= 0) {
-        toast.error('Sorry, no slots are available at this station.', { id: toastId });
+        toast.error('Sorry, no ports are available at this station.', { id: toastId });
         setIsBooking(false);
         return;
       }
@@ -140,7 +145,7 @@ const StationDetails = () => {
       const currentStation = stationDoc.data();
       
       if (currentStation.availableSlots <= 0) {
-        toast.error('Sorry, no slots are available at this station.');
+        toast.error('Sorry, no ports are available at this station.');
         return;
       }
 
@@ -152,7 +157,7 @@ const StationDetails = () => {
         stationName: currentStation.name,
         stationManagerId: currentStation.managerId,
         startTime: new Date(), // Default to current time, can be adjusted later
-        duration: 1, // Default 1 hour, can be adjusted
+  duration: 60, // Default 60 minutes, can be adjusted
         vehicleType: 'car', // Default vehicle type
         status: 'pending', // Pending confirmation by station master
         paymentStatus: 'completed', // Bid payment is completed
@@ -161,7 +166,7 @@ const StationDetails = () => {
         bidAmount: winningBidDetails.bidAmount,
         bidWinner: user.displayName || user.email,
         createdAt: new Date(),
-        notes: `Won auction with bid of $${winningBidDetails.bidAmount}`,
+  notes: `Won auction with bid of ₹${winningBidDetails.bidAmount}`,
         // Payment details
         paymentType: paymentDetails.paymentType,
         paymentMethod: paymentDetails.paymentMethod,
@@ -187,7 +192,7 @@ const StationDetails = () => {
         status: newStatus,
       });
 
-      toast.success(`Bid payment successful! Booking created for $${winningBidDetails.bidAmount}. Station master will confirm shortly.`);
+  toast.success(`Bid payment successful! Booking created for ₹${winningBidDetails.bidAmount}. Station master will confirm shortly.`);
       setShowPaymentModal(false);
       setShowBidModal(false);
       setWinningBidDetails(null);
@@ -263,12 +268,12 @@ const StationDetails = () => {
             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
               <h2 className="text-2xl font-bold mb-6">Station Details</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-lg">
-                <div className="flex items-center"><FiZap className="mr-3 h-6 w-6 text-primary-400" /><span>Total Ports: <strong className="font-semibold text-white">{station.totalPorts ?? 'N/A'}</strong></span></div>
-                <div className="flex items-center"><FiZap className="mr-3 h-6 w-6 text-green-400" /><span>Available Slots: <strong className="font-semibold text-white">{station.availableSlots ?? 'N/A'}</strong></span></div>
-                <div className="flex items-center"><FiDollarSign className="mr-3 h-6 w-6 text-yellow-400" /><span>Price: <strong className="font-semibold text-white">${station.pricePerHour}/hour</strong></span></div>
+                <div className="flex items-center"><FiZap className="mr-3 h-6 w-6 text-primary-400" /><span>Total Ports: <strong className="font-semibold text-white">{station.totalPorts ?? station.totalSlots ?? 'N/A'}</strong></span></div>
+                <div className="flex items-center"><FiZap className="mr-3 h-6 w-6 text-green-400" /><span>Available Ports: <strong className="font-semibold text-white">{station.availablePorts ?? station.availableSlots ?? 'N/A'}</strong></span></div>
+                <div className="flex items-center"><FiDollarSign className="mr-3 h-6 w-6 text-yellow-400" /><span>Price: <strong className="font-semibold text-white">₹{station.pricePerHour}/hr</strong></span></div>
                 <div className="flex items-center">
                   <FiClock className="mr-3 h-6 w-6 text-cyan-400" />
-                  <span>Status: 
+                  <span>Status:
                     <span className={`ml-2 px-3 py-1 text-sm font-bold rounded-full border ${getStatusColor(station.status)}`}>
                         {station.status}
                     </span>
@@ -293,7 +298,7 @@ const StationDetails = () => {
           {/* Right Column: Booking Form + Auction */}
           <div className="lg:col-span-1">
             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 lg:sticky lg:top-24">
-              <h2 className="text-2xl font-bold mb-6 text-center text-white">Book Your Slot</h2>
+              <h2 className="text-2xl font-bold mb-6 text-center text-white">Book Your Port</h2>
               <BookingForm 
                 station={station} 
                 onSubmit={handleBooking} 
@@ -307,7 +312,7 @@ const StationDetails = () => {
                 className="w-full bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg hover:opacity-90 transition-opacity"
                 onClick={() => setShowBidModal(true)}
               >
-                Bid for a Priority Slot
+                        Bid for a Priority Port
               </button>
             </div>
           </div>
@@ -327,13 +332,13 @@ const StationDetails = () => {
               >
                 <FiX className="h-6 w-6" />
               </button>
-              <h2 className="text-2xl font-bold text-white mb-4">E-Auction for Priority Slot</h2>
+              <h2 className="text-2xl font-bold text-white mb-4">E-Auction for Priority Port</h2>
               
               {!auctionResult ? (
                 <form onSubmit={handleBidSubmit} className="space-y-4">
-                   <p className="text-slate-400">Place a bid. The highest bidder wins the next available slot automatically.</p>
+                  <p className="text-slate-400">Place a bid. The highest bidder wins the next available port automatically.</p>
                   <div>
-                    <label htmlFor="bid" className="block text-sm font-medium text-slate-300 mb-2">Your Bid (in $)</label>
+                    <label htmlFor="bid" className="block text-sm font-medium text-slate-300 mb-2">Your Bid (in ₹)</label>
                     <input
                       id="bid"
                       type="number"
@@ -352,18 +357,18 @@ const StationDetails = () => {
                   <h3 className={`text-3xl font-bold mb-4 ${auctionResult.isWinner ? 'text-green-400' : 'text-red-400'}`}>
                     {auctionResult.isWinner ? 'You Won!' : 'Auction Lost'}
                   </h3>
-                  <p className="text-slate-300 mb-4">The winning bid was <strong className="text-white">${auctionResult.winner.bid}</strong> by <strong className="text-white">{auctionResult.winner.name}</strong>.</p>
-                  <p className="text-slate-400 text-sm mb-6">Your bid was <strong className="text-white">${auctionResult.yourBid.bid}</strong>.</p>
+                  <p className="text-slate-300 mb-4">The winning bid was <strong className="text-white">₹{auctionResult.winner.bid}</strong> by <strong className="text-white">{auctionResult.winner.name}</strong>.</p>
+                  <p className="text-slate-400 text-sm mb-6">Your bid was <strong className="text-white">₹{auctionResult.yourBid.bid}</strong>.</p>
                   {auctionResult.isWinner && (
                     <>
                       <p className="text-green-400 font-semibold mb-4">Congratulations! You won the auction!</p>
-                      <p className="text-slate-400 text-sm mb-6">Please complete payment to secure your slot.</p>
+                      <p className="text-slate-400 text-sm mb-6">Please complete payment to secure your port.</p>
                       <div className="space-y-3">
                         <button 
                           onClick={() => setShowPaymentModal(true)} 
                           className="w-full py-3 px-4 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg font-semibold hover:opacity-90 transition-opacity"
                         >
-                          Proceed to Payment - ${auctionResult.winner.bid}
+                          Proceed to Payment - ₹{auctionResult.winner.bid}
                         </button>
                         <button 
                           onClick={() => { 

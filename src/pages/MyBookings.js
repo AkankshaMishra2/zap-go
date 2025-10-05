@@ -4,7 +4,7 @@ import { collection, query, where, getDocs, doc, getDoc, updateDoc, deleteDoc, o
 import { db } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
-import { FiCalendar, FiClock, FiMapPin, FiUser, FiZap, FiX, FiTrash2, FiAlertTriangle, FiExternalLink, FiLoader, FiInbox } from 'react-icons/fi';
+import { FiCalendar, FiClock, FiMapPin, FiUser, FiTrash2, FiAlertTriangle, FiExternalLink, FiLoader, FiInbox } from 'react-icons/fi';
 
 const BookingCard = ({ booking, userRole, openDeleteModal, onBookingUpdate }) => {
   const getStatusClasses = (status) => {
@@ -25,7 +25,7 @@ const BookingCard = ({ booking, userRole, openDeleteModal, onBookingUpdate }) =>
   const getPaymentTypeText = (paymentType) => {
     switch (paymentType) {
       case 'booking':
-        return 'Partial (20%)';
+        return 'Partial (10%)';
       case 'full':
         return 'Full Payment';
       default:
@@ -96,7 +96,7 @@ const BookingCard = ({ booking, userRole, openDeleteModal, onBookingUpdate }) =>
             <FiClock className="mr-2 h-5 w-5 text-primary-400" />
             <div>
               <p className="text-xs text-slate-400">Time & Port</p>
-              <p className="font-semibold">{formatTime(booking.startTime)} - {formatTime(booking.endTime)} {booking.portNumber && `(Port ${booking.portNumber})`}</p>
+              <p className="font-semibold">{formatTime(booking.startTime)} - {formatTime(booking.endTime)} {booking.portNumber && `(Port ${booking.portNumber})`} </p>
             </div>
           </div>
           {userRole === 'stationManager' && booking.userDetails && (
@@ -125,30 +125,30 @@ const BookingCard = ({ booking, userRole, openDeleteModal, onBookingUpdate }) =>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Amount Paid:</span>
-                <span className="text-green-400 font-medium">${booking.paymentAmount?.toFixed(2) || booking.totalPrice?.toFixed(2) || 'N/A'}</span>
+                <span className="text-green-400 font-medium">₹{booking.paymentAmount?.toFixed(2) || booking.totalPrice?.toFixed(2) || 'N/A'}</span>
               </div>
               {booking.paymentType === 'booking' && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Remaining Balance:</span>
-                  <span className="text-yellow-400 font-medium">${((booking.totalPrice || 0) - (booking.paymentAmount || 0)).toFixed(2)}</span>
+                  <span className="text-yellow-400 font-medium">₹{((booking.totalPrice || 0) - (booking.paymentAmount || 0)).toFixed(2)}</span>
                 </div>
               )}
               {booking.dynamicPricing > 0 && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Dynamic Pricing:</span>
-                  <span className="text-yellow-400 font-medium">+${booking.dynamicPricing.toFixed(2)}</span>
+                  <span className="text-yellow-400 font-medium">+₹{booking.dynamicPricing.toFixed(2)}</span>
                 </div>
               )}
               {booking.bookingType === 'bid' && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Bid Amount:</span>
-                  <span className="text-yellow-400 font-medium">${booking.bidAmount || booking.totalPrice}</span>
+                  <span className="text-yellow-400 font-medium">₹{booking.bidAmount || booking.totalPrice}</span>
                 </div>
               )}
               {booking.penalty > 0 && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Late Payment Penalty:</span>
-                  <span className="text-red-400 font-medium">+${booking.penalty.toFixed(2)}</span>
+                  <span className="text-red-400 font-medium">+₹{booking.penalty.toFixed(2)}</span>
                 </div>
               )}
               {booking.isRefundable === false && (
