@@ -12,6 +12,8 @@ const BOUNDING_BOX_BUFFER_KM = 50; // Pre-filter stations within this box around
 const PATH_TOLERANCE_METERS = 50000; // Consider station "along route" within this distance
 const STATION_ACCEPT_DISTANCE_KM = 15; // Strict accept distance from route for a ZapGo station
 const FALLBACK_FORWARD_TOLERANCE_KM = 10; // If no station within range, consider this extra window
+// Detour logic: allow picking an off-route or even "opposite direction" station when nothing ahead is reachable
+const DETOUR_EXTRA_TOLERANCE_KM = 15; // Extra allowance beyond current range to consider as a viable nearby detour
 
 // Clean display name for better presentation
 const cleanDisplayName = (cityName) => {
@@ -160,7 +162,7 @@ const RoutePlanner = () => {
         routeResult = await directionsService.route(routeRequest);
       }
 
-      setDirectionsResponse(routeResult);
+  setDirectionsResponse(routeResult);
 
       const route = routeResult.routes[0];
       const routeLeg = route.legs[0];
@@ -290,8 +292,8 @@ const RoutePlanner = () => {
       // 7. Calculate which stations are reachable with current charge
   const currentRangeKm = Math.max(0, (cfg.currentCharge / 100) * cfg.maxRange);
   const finalRangeKm = Math.max(0, (cfg.finalCharge / 100) * cfg.maxRange);
-      const totalRouteDistanceKm = routeLeg.distance.value / 1000;
-  const totalRouteDurationMinutes = Math.round(routeLeg.duration.value / 60);
+    const totalRouteDistanceKm = routeLeg.distance.value / 1000;
+    // const totalRouteDurationMinutes = Math.round(routeLeg.duration.value / 60); // replaced by effectiveBaseMinutes when rerouting
       
       const reachablePoints = smartRoutePoints.map(point => {
         const distanceFromStart = point.distanceAlongRoute;
@@ -362,6 +364,32 @@ const RoutePlanner = () => {
             (s) => s.distanceAlongRoute > snapshotLastStopDist && s.distanceAlongRoute <= (snapshotMaxReachableDist + toleranceKm)
           );
           if (!fallback) {
+            // If this is the very first leg and nothing is reachable ahead,
+            // allow a nearby detour (even if off-route or opposite direction)
+            if (selectedChargingStops.length === 0) {
+              try {
+                const originLatLng = origin.geometry.location;
+                const detourMaxKm = Math.max(0, startAvailableKm + DETOUR_EXTRA_TOLERANCE_KM);
+                const detour = findNearestDetourStation(firestoreStations, originLatLng, detourMaxKm, google);
+                if (detour) {
+                  console.log(`Detour selected: ${detour.name} at ~${detour.__airKm.toFixed(1)}km from start`);
+                  selectedChargingStops.push({
+                    ...detour,
+                    type: 'charging',
+                    detour: true,
+                    // Keep distanceAlongRoute as 0 so later legs still compute correctly on original path;
+                    // actual travel/time is recalculated when we build directions with waypoints.
+                    distanceAlongRoute: 0,
+                  });
+                  lastStopDist = 0; // we haven't progressed along the original overview yet
+                  availableKm = maxRangeKm; // assume we charge here fully
+                  // continue to next iteration
+                  continue;
+                }
+              } catch (e) {
+                console.warn('Detour search failed:', e);
+              }
+            }
             console.warn('No reachable charging station found within current range window. Stopping selection.');
             break;
           }
@@ -384,9 +412,35 @@ const RoutePlanner = () => {
         })),
         { type: 'destination', name: cleanDisplayName(destination.name || routeLeg.end_address), address: routeLeg.end_address, isRegistered: false, distanceAlongRoute: totalRouteDistanceKm }
       ];
-      // Compute timing details for selected stops and destination
+      // If we picked any stops (including detours), ask Directions API to route via them so the map and timings reflect the actual path
       const departureMinutes = toMinutesSinceMidnight(startTime);
-      const withTiming = addTimingToItinerary(finalItinerary, routeLeg, departureMinutes, cfg, finalRangeKm);
+      let withTiming = [];
+      let effectiveRouteResult = routeResult;
+      if (selectedChargingStops.length > 0) {
+        try {
+          const directionsService2 = new google.maps.DirectionsService();
+          const waypoints = selectedChargingStops.map(s => ({ location: new google.maps.LatLng(s.location.lat, s.location.lng), stopover: true }));
+          const routed = await directionsService2.route({
+            origin: origin.geometry.location,
+            destination: destination.geometry.location,
+            travelMode: google.maps.TravelMode.DRIVING,
+            waypoints,
+            optimizeWaypoints: false,
+            ...(routeOptions.avoidHighways ? { avoidHighways: true } : {}),
+            ...(routeOptions.avoidTolls ? { avoidTolls: true } : {}),
+          });
+          effectiveRouteResult = routed;
+          setDirectionsResponse(routed);
+          const legs = routed.routes[0].legs;
+          withTiming = buildTimingFromLegs(finalItinerary, legs, departureMinutes, cfg, finalRangeKm);
+        } catch (e) {
+          console.warn('Routing with waypoints failed, falling back to base route timing:', e);
+          withTiming = addTimingToItinerary(finalItinerary, routeLeg, departureMinutes, cfg, finalRangeKm);
+        }
+      } else {
+        // No intermediate stops; use base route leg
+        withTiming = addTimingToItinerary(finalItinerary, routeLeg, departureMinutes, cfg, finalRangeKm);
+      }
       setJourneyPlan(withTiming);
 
       const finalRouteStops = [
@@ -404,10 +458,13 @@ const RoutePlanner = () => {
       const totalChargeMinutes = withTiming
         .filter(s => s.type === 'charging')
         .reduce((sum, s) => sum + (s.chargeDurationMinutes || 0), 0);
-      const etaWithCharging = formatDurationMinutes(totalRouteDurationMinutes + totalChargeMinutes);
+      // Prefer the recalculated route duration if we re-routed via waypoints
+      const effectiveLegs = (effectiveRouteResult?.routes?.[0]?.legs) || [routeLeg];
+      const effectiveBaseMinutes = Math.round(effectiveLegs.reduce((acc, l) => acc + (l.duration?.value || 0), 0) / 60);
+      const etaWithCharging = formatDurationMinutes(effectiveBaseMinutes + totalChargeMinutes);
       setRouteSummary({ 
-        distance: routeLeg.distance.text, 
-        duration: routeLeg.duration.text,
+        distance: (effectiveRouteResult?.routes?.[0]?.legs?.reduce((acc,l)=>acc + (l.distance?.value||0),0) ?? routeLeg.distance.value)/1000 + ' km',
+        duration: effectiveBaseMinutes >= 0 ? formatDurationMinutes(effectiveBaseMinutes) : routeLeg.duration.text,
         durationWithCharging: etaWithCharging,
         stations: reachablePoints.filter(p => p.isRegistered).length,
         totalPoints: reachablePoints.length
@@ -1198,10 +1255,10 @@ const RoutePlanner = () => {
 // A new component to render each step of the journey for clarity
 
 const JourneyStep = ({ step, index, isLast }) => {
-    let icon;
-    let titleColor = 'text-white';
-    let bgColor = 'bg-slate-700/50';
-    let statusBadge = null;
+  let icon;
+  let titleColor = 'text-white';
+  let bgColor = 'bg-slate-700/50';
+  const badges = [];
     
     // Clean the display name
     const displayName = cleanDisplayName(step.name);
@@ -1212,15 +1269,15 @@ const JourneyStep = ({ step, index, isLast }) => {
             titleColor = 'text-green-400';
             bgColor = 'bg-green-900/20';
             break;
-        case 'charging':
-            if (step.isRegistered) {
+    case 'charging':
+      if (step.isRegistered) {
                 icon = <FiZap className="text-yellow-400" />;
                 titleColor = 'text-yellow-400';
-                statusBadge = (
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-900/30 text-green-400 border border-green-500/30">
-                        ✅ Registered
-                    </span>
-                );
+        badges.push(
+          <span key="registered" className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-900/30 text-green-400 border border-green-500/30">
+            ✅ Registered
+          </span>
+        );
                 if (step.isReachable) {
                     if (step.needsChargingToReachDestination) {
                         bgColor = 'bg-red-900/20';
@@ -1240,22 +1297,30 @@ const JourneyStep = ({ step, index, isLast }) => {
                 icon = <FiMapPin className="text-blue-400" />;
                 titleColor = 'text-blue-400';
                 bgColor = 'bg-blue-900/20';
-                statusBadge = (
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-900/30 text-red-400 border border-red-500/30">
-                        ❌ Not Registered
-                    </span>
-                );
+        badges.push(
+          <span key="not-registered" className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-900/30 text-red-400 border border-red-500/30">
+            ❌ Not Registered
+          </span>
+        );
             }
+      // Mark detours explicitly
+      if (step.detour) {
+        badges.push(
+          <span key="detour" className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-indigo-900/30 text-indigo-300 border border-indigo-500/30">
+            Detour
+          </span>
+        );
+      }
             break;
         case 'intermediate':
             icon = <FiMapPin className="text-blue-400" />;
             titleColor = 'text-blue-400';
             bgColor = 'bg-blue-900/20';
-            statusBadge = (
-                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-900/30 text-red-400 border border-red-500/30">
-                    ❌ Not Registered
-                </span>
-            );
+      badges.push(
+        <span key="intermediate" className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-900/30 text-red-400 border border-red-500/30">
+          ❌ Not Registered
+        </span>
+      );
             break;
         case 'destination':
             icon = <FiMapPin className="text-red-400" />;
@@ -1276,10 +1341,10 @@ const JourneyStep = ({ step, index, isLast }) => {
             </div>
             <div className={`${bgColor} rounded-lg p-4 w-full border border-slate-600`}>
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <h4 className={`font-semibold ${titleColor}`}>{displayName}</h4>
-                        {statusBadge}
-                    </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h4 className={`font-semibold ${titleColor}`}>{displayName}</h4>
+            {badges.length > 0 && badges.map(b => b)}
+          </div>
                     {step.type === 'charging' && (
                         <button
                             onClick={() => handleBookStation(step)}
@@ -1441,4 +1506,68 @@ function addTimingToItinerary(itinerary, routeLeg, departureMinutes, cfg, finalR
     return step;
   });
   return withTiming;
+}
+
+// Build arrival/charge timing when we have a multi-leg route (origin -> stop1 -> ... -> destination)
+function buildTimingFromLegs(itinerary, legs, departureMinutes, cfg, finalRangeKm) {
+  // Build cumulative distances from legs for context (km)
+  const legKm = legs.map(l => (l.distance?.value || 0) / 1000);
+  const cumKm = [0];
+  for (let i = 0; i < legKm.length; i++) cumKm[i + 1] = cumKm[i] + legKm[i];
+
+  let timeCursor = departureMinutes; // minutes since midnight
+  const result = [];
+  for (let i = 0; i < itinerary.length; i++) {
+    const step = itinerary[i];
+    if (i === 0) {
+      result.push({ ...step, departureTimeLabel: formatTimeLabel(timeCursor) });
+      continue;
+    }
+    const leg = legs[i - 1];
+    const legMinutes = Math.round((leg.duration?.value || 0) / 60);
+    timeCursor += legMinutes; // arrive at this waypoint/destination
+    const legDistanceKm = Math.round(legKm[i - 1] * 10) / 10;
+
+    if (step.type === 'charging') {
+      // Estimate charge based on upcoming leg and final buffer
+      // Next target km is cumulative distance up to next significant point
+      const nextIndex = Math.min(itinerary.length - 1, i + 1);
+      const currentStopKm = cumKm[i - 1];
+      const nextTargetKm = cumKm[nextIndex - 1];
+      const chargeMin = estimateChargeDurationMinutes(currentStopKm, nextTargetKm, cfg, finalRangeKm);
+      const withCharge = {
+        ...step,
+        arrivalTimeLabel: formatTimeLabel(timeCursor),
+        chargeDurationMinutes: chargeMin,
+        legDistanceKm,
+        remainingRangeAfterArrivalKm: Math.max(0, cfg.maxRange - legDistanceKm),
+      };
+      result.push(withCharge);
+      timeCursor += chargeMin; // depart after charging
+    } else if (step.type === 'destination') {
+      result.push({ ...step, arrivalTimeLabel: formatTimeLabel(timeCursor), legDistanceKm });
+    } else {
+      result.push(step);
+    }
+  }
+  return result;
+}
+
+// Find closest reachable station around a point irrespective of route alignment
+function findNearestDetourStation(stations, fromLatLng, maxDistanceKm, google) {
+  if (!stations || stations.length === 0) return null;
+  let best = null;
+  let bestMeters = Infinity;
+  stations.forEach(s => {
+    try {
+      const p = new google.maps.LatLng(s.location.lat, s.location.lng);
+      const d = google.maps.geometry.spherical.computeDistanceBetween(fromLatLng, p); // meters
+      if (d < bestMeters) {
+        bestMeters = d;
+        best = { ...s, __airKm: d / 1000 };
+      }
+    } catch (_) { /* noop */ }
+  });
+  if (best && best.__airKm <= maxDistanceKm) return best;
+  return null;
 }
